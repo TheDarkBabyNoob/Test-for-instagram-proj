@@ -161,6 +161,43 @@ function unsupportedSpecifics(answer: string, evidence: string): string[] {
   return missing;
 }
 
+/* --------------------------- caveat restoration -------------------------- */
+
+/** Words that mark a sentence as a limitation, condition or caveat ("alone", "not a guarantee", ...). */
+const CAVEAT_CUES: RegExp[] = [
+  /\bnot\b|n['’]t\b|\bcannot\b/i,
+  /\balone\b/i,
+  /\bonly\b/i,
+  /\btypical(?:ly)?\b/i,
+  /\bguarantee[ds]?\b/i,
+  /\bunless\b/i,
+  /\bexcept\b/i,
+];
+
+function splitSentences(text: string): string[] {
+  return text.match(/[^.!?]+[.!?]+/g)?.map((s) => s.trim()) ?? [text.trim()];
+}
+
+/**
+ * Small models often drop the caveat that sits right next to the main fact
+ * ("... Watching a video alone does not mark the lesson complete."). For each
+ * source, any trailing sentence that states a limitation and is not already
+ * conveyed by the answer is appended verbatim. Only sentences from the cited
+ * passage are ever added, so this cannot introduce unsupported content.
+ */
+export function restoreOmittedCaveats(answer: string, sources: ScoredPassage[]): string {
+  let result = answer.trim();
+  for (const passage of sources) {
+    const [, ...trailing] = splitSentences(passage.text);
+    for (const sentence of trailing) {
+      const cues = CAVEAT_CUES.filter((cue) => cue.test(sentence));
+      if (cues.length === 0 || cues.every((cue) => cue.test(result))) continue;
+      result = `${/[.!?]$/.test(result) ? result : `${result}.`} ${sentence}`;
+    }
+  }
+  return result;
+}
+
 /** True if a sentence asks the member to hand over a password or credential. */
 export function requestsCredentials(answer: string): boolean {
   const sentences = answer.split(/(?<=[.!?])\s+/);

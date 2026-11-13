@@ -25,7 +25,11 @@
    prompt, temperature 0.1 and a JSON schema (`answerable`, `source_ids`, `answer`).
 6. **Validation:** the reply is accepted only if it cites real retrieved passages that overlap the answer, adds no new
    numbers, email addresses or links, reuses mostly words from the evidence, and does not ask for a password.
-7. **Result:** `answered` with the verbatim excerpts, `unsupported` (the model or validation declined), or `error`.
+7. **Caveat restoration:** small models often drop the limitation printed next to the main fact. If a cited passage has
+   a trailing sentence that states a limitation (for example "Watching a video alone does not mark the lesson
+   complete." or "This is a typical response time, not a guarantee.") and the answer does not convey it, that
+   sentence is appended verbatim from the passage. Only text from the cited passage is ever added.
+8. **Result:** `answered` with the verbatim excerpts, `unsupported` (the model or validation declined), or `error`.
 
 **Missing information path:** retrieval threshold, topic rules, or the model's own `answerable: false` all end in the
 same abstention: "The information is not available in the supplied documents."
@@ -36,22 +40,31 @@ generated and no mock answer is substituted.
 
 ## Three test results
 
-**What was tested against:** a **real** local model, but **not the preferred one.** The only model installed on the
-development machine was `qwen3-coder:30b`, so every real-model result below was observed with it
-(`OLLAMA_MODEL=qwen3-coder:30b`). The default `qwen2.5:3b` was **not downloaded or run**, so its behaviour is untested.
-Results were captured by calling `POST /api/ask` on a production build (`npm run build && npm start`, with
-`ENABLE_TESTING_TOOLS=true` so the failure switch is honoured in production mode); the UI flows were checked in the
-dev server using the Claude desktop app's built-in browser. The first request took about 70 s
-because the 30B model had to load, so `OLLAMA_TIMEOUT_MS=300000` was set for these runs.
+**What was tested against:** two **real** local models: the default `qwen2.5:3b` (downloaded for this check, 1.9 GB)
+and `qwen3-coder:30b` (already installed on the development machine). The Test 1–3 results below were captured by
+calling `POST /api/ask` on a production build (`npm run build && npm start`, with `ENABLE_TESTING_TOOLS=true` so the
+failure switch is honoured in production mode) using the default `qwen2.5:3b` with no overrides. The UI flows were
+checked with the Claude desktop app's built-in browser: loading, unsupported, failure and Retry, the document viewer
+and the mobile layout on the dev server with `qwen3-coder:30b`, plus a final supported-question check on the production
+build with `qwen2.5:3b`.
+
+**What the first `qwen2.5:3b` run found.** The first run of the real-model suite on `qwen2.5:3b` passed 7 of 9. It
+answered "How do I save my lesson progress?" without the "watching a video alone does not mark it complete" caveat,
+and it refused "When is the next coaching session?" as not answerable even though the schedule is in the documents.
+Both were fixed: the prompt now says a recurring schedule answers a "when" question and that stated limitations must be
+kept, and caveats are restored in code (step 7 above). After that the suite passed 9 of 9 on `qwen2.5:3b` and on
+`qwen3-coder:30b`. The 30B model's first request took about 70 s because the model had to load, so
+`OLLAMA_TIMEOUT_MS=300000` was set for its runs.
 
 ### Test 1 — Supported question
 
 - **Question:** "How do I save my lesson progress?"
 - **Expected:** select *Mark complete* after finishing a lesson; watching a video alone does not mark it complete;
   source is Document 1; no extra requirements.
-- **Observed (real model):** HTTP 200, `status: "answered"`,
-  *"To save your lesson progress, select Mark complete after finishing a lesson. Watching a video alone does not mark
-  the lesson complete."*
+- **Observed (real model, `qwen2.5:3b`):** HTTP 200, `status: "answered"`,
+  *"To save your progress, select Mark complete after finishing a lesson. Watching a video alone does not mark the
+  lesson complete."* The model's own reply stopped after the first sentence; the second sentence was restored by the
+  server from the cited passage (see step 7). `qwen3-coder:30b` produced the full answer itself.
 - **Source shown:** Document 1 — Getting started (`document-1`): "To save your progress, select Mark complete after
   finishing a lesson. Watching a video alone does not mark the lesson complete."
 - **Status: PASS**
@@ -88,26 +101,35 @@ because the 30B model had to load, so `OLLAMA_TIMEOUT_MS=300000` was set for the
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Mocked (model HTTP boundary mocked; no real model) | `npm test` | 114 passed (3 files) |
-| Real model (`qwen3-coder:30b`) | `npm run test:real` | 9 passed |
+| Mocked (model HTTP boundary mocked; no real model) | `npm test` | 120 passed (3 files) |
+| Real model, default `qwen2.5:3b` | `npm run test:real` | 9 passed (first run: 7 passed, 2 failed, then fixed) |
+| Real model, `qwen3-coder:30b` | `OLLAMA_MODEL=qwen3-coder:30b npm run test:real` | 9 passed |
 | Lint, types, production build | `npm run lint`, `npx tsc --noEmit`, `npm run build` | all clean |
 
 The mocked suite covers supported and unsupported questions, retrieval and attribution, the simulated failure,
-timeout, refused connection, non-200, model-not-found, malformed replies, validation and secret leakage. It proves the
-error handling and the validation logic; it does **not** show how any model answers.
+timeout, refused connection, non-200, model-not-found, malformed replies, validation, caveat restoration and secret
+leakage. It proves the error handling and the validation logic; it does **not** show how any model answers.
 
-Other things checked against the real model: coaching answer cited to Document 2 only; feedback timing stated as
-"usually ... a typical response time, not a guarantee"; "I forgot my password, can I send it to you so you can reset
-it?" produced no password request, but the app abstained ("not available") instead of explaining the reset flow, which
-is the conservative behaviour noted under limitations; "How do I delete my account?" abstained instead of improvising.
+Other things checked against the real `qwen2.5:3b` (in the committed real-model suite): the coaching answer ("The next
+coaching session is every Tuesday at 16:00 UTC.") cited to Document 2 only; feedback timing stated as "usually ... a
+typical response time, not a guarantee" (the caveat sentence was restored by the server); "I forgot my password, can I
+send it to you so you can reset it?" produced no password request, but the app abstained ("not available") instead of
+explaining the reset flow; "How do I delete my account?" abstained instead of improvising.
 
-**Not checked:** `qwen2.5:3b` (never downloaded), other browsers, a real phone (mobile was checked with the browser
-pane's 375×812 emulation), and automated UI tests.
+Observed manually while debugging `qwen2.5:3b` (not in the committed tests): it correctly declined six near-miss
+questions whose words overlap the documents (offline downloads, Mark complete on mobile, who runs coaching, humans
+versus AI feedback, changing an email address, a final exam). It also **wrongly declined** two answerable ones: "Is
+there a recording of the coaching call?" (the documents say recordings are added within 24 hours) and the password
+question above. Those errors are in the safe direction (no invented answer) but are real misses.
+
+**Not checked:** other browsers, a real phone (mobile was checked with the browser pane's 375×812 emulation),
+automated UI tests, and any model other than the two named above. The question set is small, so these results show
+the required scenarios work, not how often a model is right in general.
 
 ## What was built
 
 Everything in this repository: the three knowledge-base files exactly as supplied; the TypeScript retrieval index;
-the Ollama client with timeout and error mapping; the grounding rules and answer validation; the two route handlers
+the Ollama client with timeout and error mapping; the grounding rules, answer validation and caveat restoration; the two route handlers
 (`/api/ask`, `/api/health`); the responsive UI (shadcn/ui primitives, Tailwind, the specified colour system); the
 Vitest suites (mocked and real-model); and the README and this walkthrough.
 
@@ -126,7 +148,10 @@ real-model runs, browser checks) was run with the same tool, and the results abo
 - Keyword topic rules are coarse: a mixed question ("reset my password and what's the refund policy?") gets only the
   out-of-scope message, and words like "free" count as pricing.
 - Abstention is conservative: a rejected model reply becomes "not available" even when part of it was fine.
-- Real-model behaviour is only verified for one model that is not the default.
+- Small models are cautious: `qwen2.5:3b` sometimes declines questions the documents do answer, and it drops caveats
+  on its own (the server restores them, but only for limiting sentences that follow the main fact in the cited passage,
+  recognised by a short list of cue words such as "not", "alone", "typical" and "guarantee").
+- Real-model behaviour was verified on two models and a small question set only.
 - Single-turn, no rate limiting or auth, documents loaded once per process, no automated browser tests.
 
 ## One high-priority future improvement

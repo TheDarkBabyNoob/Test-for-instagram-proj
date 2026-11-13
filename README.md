@@ -121,6 +121,10 @@ passage only if the answer genuinely overlaps with its text. Passages that were 
 answer are not shown. The `score` field in the API response is a lexical similarity used for ranking. It is not a
 confidence and it is not displayed in the UI.
 
+Small models often leave out a limitation printed next to the main fact (such as "Watching a video alone does not
+mark the lesson complete." or "This is a typical response time, not a guarantee."). When that happens the server
+appends that sentence, word for word, from the cited passage. It only ever adds text that exists in a cited source.
+
 ## Simulating an API failure
 
 The failure switch exists so a reviewer can see the error path without disconnecting anything. It is a developer
@@ -208,6 +212,7 @@ Next.js route handlers (server only) ──────────────�
    ├─ validate the reply against the retrieved passages
    │     (cited passages must overlap the answer; no new numbers / emails / links;
    │      wording must mostly come from the evidence; no password requests)
+   ├─ restore caveats the model left out (verbatim sentences from the cited passage only)
    └─ "answered" + verbatim sources     or     "unsupported"     or     structured "error"
 ```
 
@@ -216,7 +221,7 @@ Next.js route handlers (server only) ──────────────�
 | `app/api/ask/route.ts`, `app/api/health/route.ts` | HTTP layer, validation, user-safe error mapping |
 | `lib/documents.ts` | Loads the three `.txt` files (server only) |
 | `lib/retrieval.ts` | Paragraph chunking, tokenising, TF-IDF vectors, cosine similarity, top-k |
-| `lib/grounding.ts` | Missing-information topics, reply parsing, answer validation |
+| `lib/grounding.ts` | Missing-information topics, reply parsing, answer validation, caveat restoration |
 | `lib/prompt.ts` | Dedicated system prompt and structured-output schema |
 | `lib/ollama.ts` | Native-`fetch` client, timeout, error mapping, health check |
 | `lib/ask.ts` | Orchestrates the whole pipeline |
@@ -272,7 +277,9 @@ Ollama whether the configured model is installed.
 - **Conservative abstention.** When validation rejects a model reply, the user sees "not available" rather than a
   partial answer. For instance, asking whether you can send your password to support abstains instead of explaining
   the reset flow.
-- **Small models.** Behaviour depends on the model; see WALKTHROUGH.md for what was verified.
+- **Small models are cautious.** With the default `qwen2.5:3b`, the required scenarios pass, but the model sometimes
+  declines a question the documents do answer (for example, whether a coaching recording exists). That fails safe,
+  but it is a real miss. See WALKTHROUGH.md for exactly what was verified and on which models.
 - Single-turn only (no conversation memory), no rate limiting or authentication (out of scope), and the documents are
   loaded once per server process, so restart after editing them.
 - No automated browser tests; the UI was checked manually.

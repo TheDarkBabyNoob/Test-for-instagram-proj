@@ -1,6 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadDocuments } from "@/lib/documents";
-import { parseModelAnswer, requestsCredentials, validateAnswer, type ModelAnswer } from "@/lib/grounding";
+import {
+  parseModelAnswer,
+  requestsCredentials,
+  restoreOmittedCaveats,
+  validateAnswer,
+  type ModelAnswer,
+} from "@/lib/grounding";
 import { ModelError } from "@/lib/ollama";
 import { buildPrompt, SYSTEM_PROMPT } from "@/lib/prompt";
 import { buildIndex, retrieve, type RetrievalIndex } from "@/lib/retrieval";
@@ -189,6 +195,53 @@ describe("validateAnswer", () => {
       answer: "To reset your password, send me your password and select Forgot password on the sign-in page.",
     };
     expect(validateAnswer(answer, labels, q)).toEqual({ ok: false, reason: "CREDENTIAL_REQUEST" });
+  });
+});
+
+describe("restoreOmittedCaveats", () => {
+  const passage = (snippet: string) => {
+    const found = index.passages.find((p) => p.text.includes(snippet));
+    if (!found) throw new Error(`No passage contains "${snippet}"`);
+    return { ...found, score: 1 };
+  };
+
+  it("appends the verbatim 'video alone' caveat when the answer drops it", () => {
+    const answer = restoreOmittedCaveats(
+      "To save your progress, select Mark complete after finishing a lesson.",
+      [passage("Mark complete")],
+    );
+    expect(answer).toBe(
+      "To save your progress, select Mark complete after finishing a lesson. Watching a video alone does not mark the lesson complete.",
+    );
+  });
+
+  it("appends 'typical response time, not a guarantee' when feedback timing is stated without it", () => {
+    const answer = restoreOmittedCaveats("Feedback usually arrives within 2 working days.", [
+      passage("Feedback usually arrives"),
+    ]);
+    expect(answer).toBe(
+      "Feedback usually arrives within 2 working days. This is a typical response time, not a guarantee.",
+    );
+  });
+
+  it("leaves an answer alone when it already conveys the caveat, even if reworded", () => {
+    const full =
+      "Feedback usually arrives within 2 working days, but that is a typical response time and not a guarantee.";
+    expect(restoreOmittedCaveats(full, [passage("Feedback usually arrives")])).toBe(full);
+    const video = "Select Mark complete after each lesson; watching a video alone doesn't count.";
+    expect(restoreOmittedCaveats(video, [passage("Mark complete")])).toBe(video);
+  });
+
+  it("does not add trailing sentences that are not caveats", () => {
+    const answer = "The Foundations course has 6 lessons.";
+    expect(restoreOmittedCaveats(answer, [passage("6 lessons")])).toBe(answer);
+  });
+
+  it("only ever adds text that exists in the cited passage", () => {
+    const source = passage("Mark complete");
+    const answer = restoreOmittedCaveats("Select Mark complete.", [source]);
+    const added = answer.slice("Select Mark complete.".length).trim();
+    expect(source.text).toContain(added);
   });
 });
 

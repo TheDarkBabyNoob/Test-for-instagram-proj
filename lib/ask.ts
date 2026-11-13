@@ -5,6 +5,7 @@ import {
   findMissingInfoStatement,
   missingTopicMessage,
   parseModelAnswer,
+  restoreOmittedCaveats,
   toSource,
   validateAnswer,
 } from "./grounding";
@@ -78,5 +79,9 @@ export async function answerQuestion(
   const verdict = validateAnswer(parseModelAnswer(content), labels, question);
   if (!verdict.ok) return abstain();
 
-  return { status: "answered", answer: verdict.answer, sources: verdict.sources.map(toSource) };
+  return {
+    status: "answered",
+    answer: restoreOmittedCaveats(verdict.answer, verdict.sources),
+    sources: verdict.sources.map(toSource),
+  };
 }

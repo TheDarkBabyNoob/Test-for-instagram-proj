@@ -151,6 +151,25 @@ describe("MOCKED model — Test 1: supported question", () => {
     expect(json.sources.map((s) => s.documentId)).toEqual(["document-2"]);
   });
 
+  it("restores caveats a small model leaves out, using only the cited passage's own words", async () => {
+    // Shape of the replies observed from qwen2.5:3b: correct, but without the caveat.
+    mockModelAnswer("To save your progress, select Mark complete after finishing a lesson.", "Mark complete");
+    const progress = await askJson({ question });
+    expect(progress.json.status).toBe("answered");
+    if (progress.json.status === "answered") {
+      expect(progress.json.answer).toContain("Watching a video alone does not mark the lesson complete.");
+      expect(progress.json.sources.map((s) => s.documentId)).toEqual(["document-1"]);
+    }
+
+    mockModelAnswer("Feedback usually arrives within 2 working days.", "Feedback usually arrives");
+    const feedback = await askJson({ question: "How long does feedback usually take?" });
+    expect(feedback.json.status).toBe("answered");
+    if (feedback.json.status === "answered") {
+      expect(feedback.json.answer).toMatch(/usually/);
+      expect(feedback.json.answer).toContain("This is a typical response time, not a guarantee.");
+    }
+  });
+
   it("cites only real retrieved passages even if the model cites labels it was never given", async () => {
     fetchMock.mockImplementation(async () =>
       ollamaEnvelope(
